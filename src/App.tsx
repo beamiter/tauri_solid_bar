@@ -26,8 +26,39 @@ interface SystemSnapshot {
   battery_percent: number;
   is_charging: boolean;
 }
+interface AudioSnapshot {
+  volume: number;
+  is_muted: boolean;
+  device_name: string;
+  has_device: boolean;
+}
+interface BrightnessSnapshot {
+  percent: number | null;
+}
 
-const BUTTONS = ["🐖", "🐄", "🐂", "🐃", "🦥", "🦣", "🐏", "🦆", "🐢"];
+const TAG_ICONS = [
+  "\u{F0A1E}",
+  "\u{F0239}",
+  "\u{F0A1B}",
+  "\u{F0B79}",
+  "\u{F024B}",
+  "\u{F0388}",
+  "\u{F0567}",
+  "\u{F01F0}",
+  "\u{F0297}",
+];
+const ICON_CPU = "\u{F4BC}";
+const ICON_MEM = "\u{F035B}";
+const ICON_BAT_FULL = "\u{F0079}";
+const ICON_BAT_CHG = "\u{F0084}";
+const ICON_VOL_HIGH = "\u{F057E}";
+const ICON_VOL_MID = "\u{F0580}";
+const ICON_VOL_LOW = "\u{F057F}";
+const ICON_VOL_MUTE = "\u{F075F}";
+const ICON_BRIGHT = "\u{F00DE}";
+const ICON_SHOT = "\u{F0104}";
+const ICON_TIME = "\u{F0954}";
+const ICON_MON = "\u{F0379}";
 
 const getButtonClass = (t: TagStatus): string => {
   if (t.is_filled) return "emoji-button state-filtered";
@@ -49,13 +80,23 @@ const parseLtSymbol = (lts: string | undefined) => {
   const sc = lts.match(/s:\s*([0-9.]+)/i);
   return { symbol: sym ? sym[1] : "[]=", scale: sc ? parseFloat(sc[1]) : undefined };
 };
-const monitorIcon = (n: number) => (n === 0 ? "󰎡" : n === 1 ? "󰎤" : `M${n}`);
+const monitorIcon = (n: number) => (n === 0 ? "\u{F02DA}" : n === 1 ? "\u{F02DB}" : `M${n}`);
 const sev = (p: number) =>
   p <= 30 ? "usage-good" : p <= 60 ? "usage-warn" : p <= 80 ? "usage-caution" : "usage-danger";
+const volumeIconChar = (a: AudioSnapshot | null): string => {
+  if (!a || !a.has_device) return ICON_VOL_MUTE;
+  if (a.is_muted) return ICON_VOL_MUTE;
+  if (a.volume <= 0) return ICON_VOL_MUTE;
+  if (a.volume < 34) return ICON_VOL_LOW;
+  if (a.volume < 67) return ICON_VOL_MID;
+  return ICON_VOL_HIGH;
+};
 
 function App() {
   const [monitor, setMonitor] = createSignal<MonitorInfoSnapshot | null>(null);
   const [system, setSystem] = createSignal<SystemSnapshot | null>(null);
+  const [audio, setAudio] = createSignal<AudioSnapshot | null>(null);
+  const [brightness, setBrightness] = createSignal<BrightnessSnapshot | null>(null);
   const [pressed, setPressed] = createSignal<number | null>(null);
   const [layoutOpen, setLayoutOpen] = createSignal(false);
   const [showSeconds, setShowSeconds] = createSignal(true);
@@ -64,6 +105,8 @@ function App() {
 
   let unlistenMonitor: UnlistenFn | undefined;
   let unlistenSystem: UnlistenFn | undefined;
+  let unlistenAudio: UnlistenFn | undefined;
+  let unlistenBrightness: UnlistenFn | undefined;
 
   onMount(async () => {
     console.log("Tauri Solid frontend has loaded.");
@@ -72,6 +115,12 @@ function App() {
     );
     unlistenSystem = await listen<SystemSnapshot>("system-update", (e) =>
       setSystem(e.payload),
+    );
+    unlistenAudio = await listen<AudioSnapshot>("audio-update", (e) =>
+      setAudio(e.payload),
+    );
+    unlistenBrightness = await listen<BrightnessSnapshot>("brightness-update", (e) =>
+      setBrightness(e.payload),
     );
   });
 
@@ -83,6 +132,8 @@ function App() {
   onCleanup(() => {
     unlistenMonitor?.();
     unlistenSystem?.();
+    unlistenAudio?.();
+    unlistenBrightness?.();
   });
 
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -121,14 +172,38 @@ function App() {
       setTimeout(() => setIsTaking(false), 500);
     }
   };
+  const onToggleMute = () => {
+    invoke("toggle_mute").catch((e) => console.error(e));
+  };
+  const onVolumeWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 5 : -5;
+    invoke("adjust_volume", { delta }).catch((err) => console.error(err));
+  };
+  const onVolumeRight = (e: MouseEvent) => {
+    e.preventDefault();
+    invoke("adjust_volume", { delta: -5 }).catch((err) => console.error(err));
+  };
+  const onBrightnessClick = () => {
+    invoke("adjust_brightness", { delta: 5 }).catch((e) => console.error(e));
+  };
+  const onBrightnessRight = (e: MouseEvent) => {
+    e.preventDefault();
+    invoke("adjust_brightness", { delta: -5 }).catch((err) => console.error(err));
+  };
+  const onBrightnessWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 5 : -5;
+    invoke("adjust_brightness", { delta }).catch((err) => console.error(err));
+  };
 
   return (
     <Show when={monitor()} fallback={<div class="button-row">Loading...</div>}>
       {(m) => (
         <div class="button-row">
           <div class="buttons-container">
-            <For each={BUTTONS}>
-              {(emoji, i) => {
+            <For each={TAG_ICONS}>
+              {(icon, i) => {
                 const tag = () =>
                   m().tag_status_vec[i()] ?? {
                     is_selected: false,
@@ -142,8 +217,9 @@ function App() {
                     onMouseDown={() => handlePress(i())}
                     onMouseUp={() => handleRelease(i(), m().monitor_num)}
                     onMouseLeave={() => setPressed(null)}
+                    title={`Tag ${i() + 1}`}
                   >
-                    {emoji}
+                    <span class="nf-icon">{icon}</span>
                   </button>
                 );
               }}
@@ -190,22 +266,28 @@ function App() {
                 when={system()}
                 fallback={
                   <>
-                    <div class="pill usage-pill usage-warn">CPU --%</div>
-                    <div class="pill usage-pill usage-warn">MEM --%</div>
-                    <div class="pill usage-pill usage-warn">🔋 --%</div>
+                    <div class="pill usage-pill usage-warn">
+                      <span class="nf-icon">{ICON_CPU}</span> --%
+                    </div>
+                    <div class="pill usage-pill usage-warn">
+                      <span class="nf-icon">{ICON_MEM}</span> --%
+                    </div>
+                    <div class="pill usage-pill usage-warn">
+                      <span class="nf-icon">{ICON_BAT_FULL}</span> --%
+                    </div>
                   </>
                 }
               >
                 {(s) => (
                   <>
                     <div class={`pill usage-pill ${sev(s().cpu_average)}`} title="CPU 平均使用率">
-                      {`CPU ${s().cpu_average.toFixed(0)}%`}
+                      <span class="nf-icon">{ICON_CPU}</span> {`${s().cpu_average.toFixed(0)}%`}
                     </div>
                     <div
                       class={`pill usage-pill ${sev(s().memory_usage_percent)}`}
                       title={`内存使用: ${formatBytes(s().memory_used)} / ${formatBytes(s().memory_total)}`}
                     >
-                      {`MEM ${s().memory_usage_percent.toFixed(0)}%`}
+                      <span class="nf-icon">{ICON_MEM}</span> {`${s().memory_usage_percent.toFixed(0)}%`}
                     </div>
                     <div
                       class={`pill usage-pill ${
@@ -221,7 +303,8 @@ function App() {
                           : `电池电量: ${s().battery_percent.toFixed(1)}%`
                       }
                     >
-                      {`${s().is_charging ? "🔌" : "🔋"} ${s().battery_percent.toFixed(0)}%`}
+                      <span class="nf-icon">{s().is_charging ? ICON_BAT_CHG : ICON_BAT_FULL}</span>
+                      {` ${s().battery_percent.toFixed(0)}%`}
                     </div>
                   </>
                 )}
@@ -229,11 +312,35 @@ function App() {
             </div>
 
             <div
+              class="pill brightness-pill"
+              onClick={onBrightnessClick}
+              onWheel={onBrightnessWheel}
+              onContextMenu={onBrightnessRight}
+              title="左键加亮 / 右键减暗 / 滚轮调节"
+            >
+              <span class="nf-icon">{ICON_BRIGHT}</span>{" "}
+              {brightness()?.percent != null ? `${brightness()!.percent}%` : "--"}
+            </div>
+
+            <div
+              class={`pill volume-pill ${
+                !audio() || audio()!.is_muted || !audio()!.has_device ? "muted" : ""
+              }`}
+              onClick={onToggleMute}
+              onWheel={onVolumeWheel}
+              onContextMenu={onVolumeRight}
+              title="左键静音 / 滚轮调节"
+            >
+              <span class="nf-icon">{volumeIconChar(audio())}</span>{" "}
+              {audio()?.has_device ? `${audio()!.volume}%` : "--"}
+            </div>
+
+            <div
               class={`pill screenshot-pill ${isTaking() ? "taking" : ""}`}
               onClick={takeScreenshot}
               title="截图 (Flameshot)"
             >
-              {isTaking() ? "⏳" : "📸"}
+              <span class="nf-icon">{ICON_SHOT}</span>
             </div>
 
             <div
@@ -241,11 +348,11 @@ function App() {
               onClick={() => setShowSeconds(!showSeconds())}
               title="点击切换秒显示"
             >
-              {formattedTime()}
+              <span class="nf-icon">{ICON_TIME}</span> {formattedTime()}
             </div>
 
             <div class="pill monitor-pill" title="显示器">
-              {"🖥️ " + monitorIcon(m().monitor_num)}
+              <span class="nf-icon">{ICON_MON}</span> {monitorIcon(m().monitor_num)}
             </div>
 
             <div class="pill scale-pill" title="Scale Factor">
