@@ -180,10 +180,6 @@ function App() {
     const delta = e.deltaY < 0 ? 5 : -5;
     invoke("adjust_volume", { delta }).catch((err) => console.error(err));
   };
-  const onVolumeRight = (e: MouseEvent) => {
-    e.preventDefault();
-    invoke("adjust_volume", { delta: -5 }).catch((err) => console.error(err));
-  };
   const onBrightnessClick = () => {
     invoke("adjust_brightness", { delta: 5 }).catch((e) => console.error(e));
   };
@@ -328,7 +324,6 @@ function App() {
               }`}
               onClick={onToggleMute}
               onWheel={onVolumeWheel}
-              onContextMenu={onVolumeRight}
               title="左键静音 / 滚轮调节"
             >
               <span class="nf-icon">{volumeIconChar(audio())}</span>{" "}
